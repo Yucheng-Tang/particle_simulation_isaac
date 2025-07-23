@@ -52,14 +52,14 @@ def fifth(x: float):
 
 
 @wp.func
-# xyz: relative distances along the axis
+# xyz: relative distances between current particle and neighbor
 # smoothing_length: how far a particle's influence extends
 def density_kernel(xyz: wp.vec3, smoothing_length: float):
     # calculate distance
     distance = wp.dot(xyz, xyz)
 
+    # No negative density
     return wp.max(cube(square(smoothing_length) - distance), 0.0)
-    # return 0 when outside of the smoothing range
 
 
 @wp.func
@@ -295,7 +295,7 @@ class Example:
         # add mesh to the stage
         usd_stage = Usd.Stage.Open(os.path.join(warp.examples.get_asset_directory(), "bunny.usd"))
         usd_geom = UsdGeom.Mesh(usd_stage.GetPrimAtPath("/root/bunny"))
-        usd_scale = 10.0
+        usd_scale = 30.0
         self.mesh = wp.Mesh(
             points=wp.array(usd_geom.GetPointsAttr().Get() * usd_scale, dtype=wp.vec3),
             indices=wp.array(usd_geom.GetFaceVertexIndicesAttr().Get(), dtype=int),
