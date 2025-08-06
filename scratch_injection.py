@@ -93,40 +93,56 @@ class Example:
 
     ### Note: inconvinient to add particles to the state,
     ### could be better idea to add them to the ModelBuilder
-    def inject_particles(self, state):
-        # add particles to state
-        particles = state.particle_q
-        particles_np = particles.numpy()
-        particles_np = np.append(particles_np, [[100.0, 1000.0, 0.0]], axis=0)
+    def inject_particles(self):
+        particle_q = self.model.particle_q
+        particle_qd = self.model.particle_qd
+        particle_inv_mass = self.model.particle_inv_mass
+        particle_flags = self.model.particle_flags
+
+        particle_q_np = particle_q.numpy()
+        particle_qd_np = particle_qd.numpy()
+        particle_inv_mass_np = particle_inv_mass.numpy()
+        particle_flags_np = particle_flags.numpy()
         
-        # TODO: add vel and f
-        state.particle_q = wp.array(particles_np, dtype=wp.vec3)
+        particle_q_np = np.append(particle_q_np, [[100.0, 1000.0, 0.0]], axis=0)
+        particle_qd_np = np.append(particle_qd_np, [[0.0, 0.0, 0.0]], axis=0)
+        particle_inv_mass_np = np.append(particle_inv_mass_np, 10.0)
+        particle_flags_np = np.append(particle_flags_np, 1)
+
+        self.model.particle_q = wp.array(particle_q_np, dtype=wp.vec3)
+        self.model.particle_qd = wp.array(particle_qd_np, dtype=wp.vec3)
+        self.model.particle_inv_mass = wp.array(particle_inv_mass_np, dtype=wp.float32)
+        self.model.particle_flags = wp.array(particle_flags_np, dtype=wp.uint32)
+        self.model.particle_count += 1
         
-        logger.info("particles_q related")
-        logger.info(f"particles before:{particles.shape}")
-        logger.info(f"particles in numpy after appending:{particles_np.shape}")
-        logger.info(f"array conversion:{wp.array(particles_np, dtype=wp.vec3).size}")
+        # logger.info("---particles_q related---")
+        # logger.info(f"particles before:{particle_q.shape}")
+        # logger.info(f"particles in numpy after appending:{particle_q_np.shape}")
+        # logger.info(f"array conversion:{wp.array(particle_q_np, dtype=wp.vec3).shape}")
 
         # State infomation
-        logger.info("State related")
-        logger.info(f"output particles:{state.particle_q.size}")
-        logger.info(f"particle_count:{state.particle_count}")
-        logger.info(f"particle_vel:{state.particle_qd.shape}")
-        logger.info(f"particle_f:{state.particle_f.shape}")
+        # logger.info("---State related---")
+        # logger.info(f"particle_count:{state.particle_count}")
+        # logger.info(f"output particles:{state.particle_q.shape}")
+        # logger.info(f"particle_vel:{state.particle_qd.shape}")
+        # logger.info(f"particle_f:{state.particle_f.shape}")
 
-        logger.info("Model related")
-        logger.info(f"particle_inv_mass: {self.model.particle_inv_mass.shape}")
+        logger.info("---Model related---")
+        logger.info(f"model.particle_count: {self.model.particle_count}")
+        logger.info(f"particle_inv_mass: {self.model.particle_inv_mass}")
+        logger.info(f"particle_inv_mass_np: {self.model.particle_inv_mass.shape}")
+        logger.info(f"particle_inv_mass_np: {self.model.particle_flags}")
         logger.info(f"particle_flags: {self.model.particle_flags.shape}\n")
         
 
     def simulate(self):
         for _ in range(self.sim_substeps):
             # state_0 is the start state
-            
+            # add particles to state_0
+            self.inject_particles()
+            self.state_1 = self.model.state()
             self.state_0.clear_forces()
             
-            # add particles to state_0
-            self.inject_particles(self.state_0)
             self.integrator.simulate(self.model, self.state_0, self.state_1, self.sim_dt)
 
             # swap states
