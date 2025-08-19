@@ -24,6 +24,7 @@
 import warp as wp
 import warp.sim
 import warp.sim.render
+from warp.sim.model import PARTICLE_FLAG_ACTIVE
 import numpy as np
 import logging
 
@@ -91,56 +92,61 @@ class Example:
                 self.simulate()
             self.graph = capture.graph
 
-    ### Note: inconvinient to add particles to the state,
-    ### could be better idea to add them to the ModelBuilder
-    def inject_particles(self):
-        particle_q = self.model.particle_q
-        particle_qd = self.model.particle_qd
-        particle_inv_mass = self.model.particle_inv_mass
-        particle_flags = self.model.particle_flags
 
-        particle_q_np = particle_q.numpy()
-        particle_qd_np = particle_qd.numpy()
-        particle_inv_mass_np = particle_inv_mass.numpy()
-        particle_flags_np = particle_flags.numpy()
-        
-        particle_q_np = np.append(particle_q_np, [[100.0, 1000.0, 0.0]], axis=0)
-        particle_qd_np = np.append(particle_qd_np, [[0.0, 0.0, 0.0]], axis=0)
-        particle_inv_mass_np = np.append(particle_inv_mass_np, 10.0)
-        particle_flags_np = np.append(particle_flags_np, 1)
 
-        self.model.particle_q = wp.array(particle_q_np, dtype=wp.vec3)
-        self.model.particle_qd = wp.array(particle_qd_np, dtype=wp.vec3)
-        self.model.particle_inv_mass = wp.array(particle_inv_mass_np, dtype=wp.float32)
-        self.model.particle_flags = wp.array(particle_flags_np, dtype=wp.uint32)
-        self.model.particle_count += 1
-        
-        # logger.info("---particles_q related---")
-        # logger.info(f"particles before:{particle_q.shape}")
-        # logger.info(f"particles in numpy after appending:{particle_q_np.shape}")
-        # logger.info(f"array conversion:{wp.array(particle_q_np, dtype=wp.vec3).shape}")
+    def inject_particles(self, pos=wp.vec3(100.0, 2000.0, 0.0), vel=wp.vec3(0.0, 0.0, 0.0), mass=0.1, radius=None):
+        dev = self.model.device
+        old_n = self.state_0.particle_count
+        new_n = old_n + 1
 
-        # State infomation
-        # logger.info("---State related---")
-        # logger.info(f"particle_count:{state.particle_count}")
-        # logger.info(f"output particles:{state.particle_q.shape}")
-        # logger.info(f"particle_vel:{state.particle_qd.shape}")
-        # logger.info(f"particle_f:{state.particle_f.shape}")
+        # 1) Update Model arrays (per-particle params) and particle_count
+        # pos/vel in model are only used if you later call model.state(); we keep them consistent anyway
+        def append_wparray(arr, np_val, dtype):
+            if arr is None:
+                base = np.array([], dtype=np_val.dtype).reshape(0, *np_val.shape[1:])
+            else:
+                base = arr.numpy()
+            new_np = np.append(base, np_val, axis=0) if base.ndim == 2 else np.append(base, np_val)
+            return wp.array(new_np, dtype=dtype, device=dev)
 
-        logger.info("---Model related---")
-        logger.info(f"model.particle_count: {self.model.particle_count}")
-        logger.info(f"particle_inv_mass: {self.model.particle_inv_mass}")
-        logger.info(f"particle_inv_mass_np: {self.model.particle_inv_mass.shape}")
-        logger.info(f"particle_inv_mass_np: {self.model.particle_flags}")
-        logger.info(f"particle_flags: {self.model.particle_flags.shape}\n")
+        if radius is None:
+            radius = self.model.particle_radius.numpy()[-1] if self.model.particle_radius is not None else self.radius
+
+        self.model.particle_q  = append_wparray(self.model.particle_q,  np.array([[pos[0], pos[1], pos[2]]], dtype=np.float32), wp.vec3)
+        self.model.particle_qd = append_wparray(self.model.particle_qd, np.array([[vel[0], vel[1], vel[2]]], dtype=np.float32), wp.vec3)
+        self.model.particle_mass = append_wparray(self.model.particle_mass, np.array([mass], dtype=np.float32), wp.float32)
+        self.model.particle_inv_mass = append_wparray(self.model.particle_inv_mass, np.array([0.0 if mass == 0.0 else 1.0/mass], dtype=np.float32), wp.float32)
+        self.model.particle_radius = append_wparray(self.model.particle_radius, np.array([radius], dtype=np.float32), wp.float32)
+        self.model.particle_flags = append_wparray(self.model.particle_flags, np.array([int(PARTICLE_FLAG_ACTIVE.value)], dtype=np.uint32), wp.uint32)
+        self.model.particle_max_radius = float(max(self.model.particle_max_radius, radius))
+        self.model.particle_count = new_n  # critical for kernel dim
+
+        # 2) Expand state_0 arrays to new length (keep previous data)
+        q0  = self.state_0.particle_q.numpy()
+        qd0 = self.state_0.particle_qd.numpy()
+        f0  = self.state_0.particle_f.numpy()
+
+        q0  = np.vstack([q0,  np.array([[pos[0], pos[1], pos[2]]], dtype=np.float32)])
+        qd0 = np.vstack([qd0, np.array([[vel[0], vel[1], vel[2]]], dtype=np.float32)])
+        f0  = np.vstack([f0,  np.array([[0.0, 0.0, 0.0]], dtype=np.float32)])
+
+        self.state_0.particle_q  = wp.array(q0,  dtype=wp.vec3, device=dev)
+        self.state_0.particle_qd = wp.array(qd0, dtype=wp.vec3, device=dev)
+        self.state_0.particle_f  = wp.array(f0,  dtype=wp.vec3, device=dev)
+
+        # 3) Ensure state_1 arrays are same size (fresh storage for outputs)
+        self.state_1.particle_q  = wp.empty_like(self.state_0.particle_q)
+        self.state_1.particle_qd = wp.empty_like(self.state_0.particle_qd)
+        self.state_1.particle_f  = wp.zeros_like(self.state_0.particle_qd)
+
+        logger.info(f"state.particle_q:{self.state_0.particle_q.shape}")
+        logger.info(f"Injected. model.particle_count={self.model.particle_count}, state size={self.state_0.particle_count}\n")
         
 
     def simulate(self):
         for _ in range(self.sim_substeps):
-            # state_0 is the start state
-            # add particles to state_0
             self.inject_particles()
-            self.state_1 = self.model.state()
+            self.model.particle_grid.build(self.state_0.particle_q, self.radius * 2.0)
             self.state_0.clear_forces()
             
             self.integrator.simulate(self.model, self.state_0, self.state_1, self.sim_dt)
@@ -151,6 +157,7 @@ class Example:
     def step(self):
         # print("Number of particles: ", self.state_0.particle_q.size)
         with wp.ScopedTimer("step"):
+            # self.inject_particles()
             self.model.particle_grid.build(self.state_0.particle_q, self.radius * 2.0)
             if self.use_cuda_graph:
                 wp.capture_launch(self.graph)
