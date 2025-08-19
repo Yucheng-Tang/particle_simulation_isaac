@@ -3,6 +3,29 @@ import warp as wp
 import warp.render
 
 @wp.kernel
+def emit_new_particles(
+    positions: wp.array(dtype=wp.vec3),
+    velocities: wp.array(dtype=wp.vec3),
+    emission_pos: wp.vec3,
+    emission_vel: wp.vec3,
+    # rng: np.random._generator.Generator,
+    emission_spread: float,
+    emission_vel_spread: float,
+    current_particles: int,
+    max_particles: int
+):
+    tid = wp.tid()
+    if tid <= current_particles or tid >= max_particles:
+        return
+    # pos = emission_pos.numpy() + (rng.random(3)-0.5) * emission_spread
+    # vel = emission_vel.numpy() + (rng.random(3)-0.5) * emission_vel_spread
+    # TODO: use wand.rand_init to generate noise
+    pos = emission_pos
+    vel = emission_vel
+    positions[tid] = pos
+    velocities[tid] = vel
+
+@wp.kernel
 def simulate(
     positions: wp.array(dtype=wp.vec3),
     velocities: wp.array(dtype=wp.vec3),
@@ -48,24 +71,29 @@ class Emission:
 
     def emit_new_particles(self):
         """Emit new particles based on emission rate"""
+        if self.current_particles >= self.max_particles:
+            return
         self.emission_counter += self.emission_rate * self.sim_timestep
 
         particles_to_emit = int(self.emission_counter)
         self.emission_counter -= particles_to_emit      # account for the remainder
 
-        for _ in range(particles_to_emit):
-            if self.current_particles >= self.max_particles:
-                break
-
-            # Random position around emission point
-            pos = self.emission_pos + (self.rng.random(3) - 0.5) * self.emission_spread
-            vel = self.emission_vel + (self.rng.random(3) - 0.5) * self.emission_vel_spread
-
-            # Add particle to arrays
-            self.positions.numpy()[self.current_particles] = pos
-            self.velocities.numpy()[self.current_particles] = vel
-
-            self.current_particles += 1
+        wp.launch(
+            kernel = emit_new_particles,
+            dim = self.current_particles + particles_to_emit,
+            inputs = [
+                self.positions, 
+                self.velocities,
+                self.emission_pos,
+                self.emission_vel,
+                # self.rng,
+                self.emission_spread,
+                self.emission_vel_spread,
+                self.current_particles, 
+                self.max_particles
+            ]
+        )
+        self.current_particles += particles_to_emit
 
     def step(self):
         with wp.ScopedTimer("step"):
