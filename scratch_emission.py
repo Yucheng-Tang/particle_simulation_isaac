@@ -1,6 +1,10 @@
+import os
 import numpy as np
 import warp as wp
 import warp.render
+import warp.examples
+from pxr import Usd, UsdGeom
+
 
 @wp.kernel
 def emit_new_particles(
@@ -30,7 +34,8 @@ def emit_new_particles(
 def simulate(
     positions: wp.array(dtype=wp.vec3),
     velocities: wp.array(dtype=wp.vec3),
-    sim_timestep: float
+    sim_timestep: float,
+    mesh: wp.uint64
 ):
     tid = wp.tid()
 
@@ -43,6 +48,14 @@ def simulate(
     # pbd update
     v = (xpred - x) * (1.0 / sim_timestep)
     x = xpred
+
+    max_dist = 1.5
+
+    query = wp.mesh_query_point_sign_normal(mesh, xpred, max_dist)
+    if query.result:
+        p = wp.mesh_eval_position(mesh, query.face, query.u, query.v)
+        x = p
+        v = wp.vec3(0.0, 0.0, 0.0)
 
     positions[tid] = x
     velocities[tid] = v
@@ -62,10 +75,19 @@ class Emission:
         self.current_particles = 0
         self.emission_counter = 0.0
         self.emission_rate = 1_000     # particles per second
-        self.emission_pos = wp.vec3(0.0, 5.0, 0.0)
+        self.emission_pos = wp.vec3(0.0, 20.0, 0.0)
         self.emission_spread = 0.5
         self.emission_vel = wp.vec3(0.0, 0.0, 0.0)
         self.emission_vel_spread = 1.0
+
+        # create collision mesh
+        usd_stage = Usd.Stage.Open(os.path.join(warp.examples.get_asset_directory(), "bunny.usd"))
+        usd_geom = UsdGeom.Mesh(usd_stage.GetPrimAtPath("/root/bunny"))
+        usd_scale = 10.0
+        self.mesh = wp.Mesh(
+            points=wp.array(usd_geom.GetPointsAttr().Get() * usd_scale, dtype=wp.vec3),
+            indices=wp.array(usd_geom.GetFaceVertexIndicesAttr().Get(), dtype=int),
+        )
 
         self.renderer = None
         if stage_path:
@@ -104,7 +126,7 @@ class Emission:
                 wp.launch(
                     kernel = simulate,
                     dim = self.current_particles,
-                    inputs = [self.positions, self.velocities, self.sim_timestep]
+                    inputs = [self.positions, self.velocities, self.sim_timestep, self.mesh.id]
                 )
             self.sim_time += self.sim_timestep
 
@@ -113,6 +135,12 @@ class Emission:
             return
         with wp.ScopedTimer("render"):
             self.renderer.begin_frame(self.sim_time)
+            self.renderer.render_mesh(
+                name="mesh",
+                points=self.mesh.points.numpy(),
+                indices=self.mesh.indices.numpy(),
+                colors=(0.35, 0.55, 0.9),
+            )
             self.renderer.render_points(
                 name="points", points=self.positions.numpy(), radius=self.particle_radius, colors=(0.8, 0.3, 0.2)
             )
