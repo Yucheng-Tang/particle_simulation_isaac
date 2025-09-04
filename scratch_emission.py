@@ -8,20 +8,21 @@ def emit_new_particles(
     velocities: wp.array(dtype=wp.vec3),
     emission_pos: wp.vec3,
     emission_vel: wp.vec3,
-    # rng: np.random._generator.Generator,
+    seed: wp.int32,
     emission_spread: float,
     emission_vel_spread: float,
     current_particles: int,
     max_particles: int
 ):
     tid = wp.tid()
-    if tid <= current_particles or tid >= max_particles:
+    if tid < current_particles or tid >= max_particles:
         return
-    # pos = emission_pos.numpy() + (rng.random(3)-0.5) * emission_spread
-    # vel = emission_vel.numpy() + (rng.random(3)-0.5) * emission_vel_spread
-    # TODO: use wand.rand_init to generate noise
-    pos = emission_pos
-    vel = emission_vel
+
+    rng = wp.rand_init(seed, tid)
+    pos_noise = wp.vec3(wp.randn(rng), wp.randn(rng), wp.randn(rng)) * emission_spread
+    vel_noise = wp.vec3(wp.randn(rng), wp.randn(rng), wp.randn(rng)) * emission_vel_spread
+    pos = emission_pos + pos_noise
+    vel = emission_vel + vel_noise
     positions[tid] = pos
     velocities[tid] = vel
 
@@ -49,13 +50,14 @@ def simulate(
 class Emission:
     def __init__(self, stage_path='emission.usd'):
         self.rng = np.random.default_rng(7777)
+        self.seed = 7777
         self.sim_timestep = 1.0 / 60.0
         self.sim_time = 0.0
 
         self.max_particles = 100_000
         self.particle_radius = 0.1
-        self.positions = wp.zeros(self.max_particles, dtype=wp.vec3)
-        self.velocities = wp.zeros(self.max_particles, dtype=wp.vec3)
+        self.positions = wp.empty(self.max_particles, dtype=wp.vec3)
+        self.velocities = wp.empty(self.max_particles, dtype=wp.vec3)
 
         self.current_particles = 0
         self.emission_counter = 0.0
@@ -82,14 +84,14 @@ class Emission:
             kernel = emit_new_particles,
             dim = self.current_particles + particles_to_emit,
             inputs = [
-                self.positions, 
+                self.positions,
                 self.velocities,
                 self.emission_pos,
                 self.emission_vel,
-                # self.rng,
+                self.seed,
                 self.emission_spread,
                 self.emission_vel_spread,
-                self.current_particles, 
+                self.current_particles,
                 self.max_particles
             ]
         )
