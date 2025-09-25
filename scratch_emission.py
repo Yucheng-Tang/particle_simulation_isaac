@@ -71,17 +71,17 @@ class Emission:
         self.sim_timestep = 1.0 / 60.0
         self.sim_time = 0.0
 
-        self.max_particles = 100_000
-        self.particle_radius = 0.1
+        self.max_particles = 10_000
+        self.particle_radius = 0.05
         self.positions = wp.empty(self.max_particles, dtype=wp.vec3)
         self.velocities = wp.empty(self.max_particles, dtype=wp.vec3)
 
         self.current_particles = 0
         self.emission_counter = 0.0
-        self.emission_rate = 1_000  # particles per second
+        self.emission_rate = 500  # particles per second
         self.emission_pos = wp.vec3(0.0, 20.0, 0.0)
-        self.emission_spread = 0.5
-        self.emission_vel = wp.vec3(0.0, 0.0, 0.0)
+        self.emission_spread = 0.1
+        self.emission_vel = wp.vec3(0.0, 0.5, 0.0)
         self.emission_vel_spread = 1.0
 
         # create collision mesh
@@ -142,7 +142,7 @@ class Emission:
             self.sim_time += self.sim_timestep
 
     def render(self):
-        if self.render is None:
+        if self.render is None or self.current_particles <= 0:
             return
         with wp.ScopedTimer("render"):
             self.renderer.begin_frame(self.sim_time)
@@ -170,7 +170,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--device", type=str, default=None, help="Override the default Warp device."
     )
-    parser.add_argument("--num_frames", type=int, default=200)
+    parser.add_argument("--num_frames", type=int, default=500)
 
     args = parser.parse_known_args()[0]
 
