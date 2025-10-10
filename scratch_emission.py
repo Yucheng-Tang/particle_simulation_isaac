@@ -7,6 +7,19 @@ from pxr import Usd, UsdGeom
 
 
 @wp.kernel
+def transform_mesh_points(
+    points: wp.array(dtype=wp.vec3),
+    offset: wp.vec3,
+    rotation_axis: wp.vec3,
+    rotation_angle: float,
+):
+    tid = wp.tid()
+    rotation = wp.quat_from_axis_angle(rotation_axis, rotation_angle)
+    transform_matrix = wp.transform_compose(offset, rotation, wp.vec3(1.0, 1.0, 1.0))
+    points[tid] = wp.transform_point(transform_matrix, points[tid])
+
+
+@wp.kernel
 def emit_new_particles(
     positions: wp.array(dtype=wp.vec3),
     velocities: wp.array(dtype=wp.vec3),
@@ -78,8 +91,8 @@ class Emission:
 
         self.current_particles = 0
         self.emission_counter = 0.0
-        self.emission_rate = 500  # particles per second
-        self.emission_pos = wp.vec3(0.0, 20.0, 0.0)
+        self.emission_rate = 1000  # particles per second
+        self.emission_pos = wp.vec3(2.5, 21.3, -0.4)
         self.emission_spread = 0.1
         self.emission_vel = wp.vec3(0.0, 0.5, 0.0)
         self.emission_vel_spread = 1.0
@@ -90,10 +103,43 @@ class Emission:
         )
         usd_geom = UsdGeom.Mesh(usd_stage.GetPrimAtPath("/root/bunny"))
         usd_scale = 10.0
-        self.mesh = wp.Mesh(
+        mesh = wp.Mesh(
             points=wp.array(usd_geom.GetPointsAttr().Get() * usd_scale, dtype=wp.vec3),
             indices=wp.array(usd_geom.GetFaceVertexIndicesAttr().Get(), dtype=int),
         )
+        self.mesh = mesh
+
+        # create spray gun mesh
+        sg_usd_stage = Usd.Stage.Open(os.path.join("res", "spray_gun2.usd"))
+        sg_usd_scale = 0.04
+        sg_usd_offset = wp.vec3(2.0, 25.0, 0.0)
+        sg_usd_rotation_axis = wp.vec3(0.0, 0.0, 1.0)
+        sg_usd_rotation_angle = -wp.pi / 2.0
+        self.sg_meshes = []
+        for prim in sg_usd_stage.Traverse():
+            if prim.GetTypeName() == "Mesh":
+                sg_usd_geom = UsdGeom.Mesh(prim)
+                sg_mesh_points = wp.array(
+                    sg_usd_geom.GetPointsAttr().Get() * sg_usd_scale, dtype=wp.vec3
+                )
+                wp.launch(
+                    kernel=transform_mesh_points,
+                    dim=sg_mesh_points.shape[0],
+                    inputs=[
+                        sg_mesh_points,
+                        sg_usd_offset,
+                        sg_usd_rotation_axis,
+                        sg_usd_rotation_angle,
+                    ],
+                )
+                self.sg_meshes.append(
+                    wp.Mesh(
+                        points=sg_mesh_points,
+                        indices=wp.array(
+                            sg_usd_geom.GetFaceVertexIndicesAttr().Get(), dtype=int
+                        ),
+                    )
+                )
 
         self.renderer = None
         if stage_path:
@@ -152,6 +198,13 @@ class Emission:
                 indices=self.mesh.indices.numpy(),
                 colors=(0.35, 0.55, 0.9),
             )
+            for mesh in self.sg_meshes:
+                self.renderer.render_mesh(
+                    name=f"sg_mesh{mesh.id}",
+                    points=mesh.points.numpy(),
+                    indices=mesh.indices.numpy(),
+                    colors=(0.2, 0.33, 0.1),
+                )
             self.renderer.render_points(
                 name="points",
                 points=self.positions.numpy(),
