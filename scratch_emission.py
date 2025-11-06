@@ -188,7 +188,7 @@ class Emission:
             self.sim_time += self.sim_timestep
 
     def render(self):
-        if self.render is None or self.current_particles <= 0:
+        if self.renderer is None or self.current_particles <= 0:
             return
         with wp.ScopedTimer("render"):
             self.renderer.begin_frame(self.sim_time)
